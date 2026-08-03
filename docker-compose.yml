@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_AUTH_CREDENTIALS_FILE=/chroma/auth
+      - ANONYMIZED_TELEMETRY=False
+    networks:
+      - loganalyser_net
+
+  ai-service:
+    build: ./ai-service
+    ports:
+      - "8001:8001"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+    depends_on:
+      - chromadb
+    volumes:
+      - ./ai-service:/app
+    networks:
+      - loganalyser_net
+
+  backend:
+    build: ./backend
+    ports:
+      - "3001:3001"
+    environment:
+      - AI_SERVICE_URL=http://ai-service:8001
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - JWT_SECRET=${JWT_SECRET:-supersecretkey}
+      - NODE_ENV=development
+    depends_on:
+      - ai-service
+      - chromadb
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - loganalyser_net
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:3001
+      - VITE_WS_URL=ws://localhost:3001
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - loganalyser_net
+
+volumes:
+  chroma_data:
+
+networks:
+  loganalyser_net:
+    driver: bridge
