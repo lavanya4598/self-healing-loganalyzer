@@ -25,6 +25,17 @@ GenAI API (OpenAI / Google Gemini)
   - **L1 (Auto)** — Safe, low-risk actions execute automatically
   - **L2 (Team Lead)** — Medium-risk actions need team lead or admin approval
   - **L3 (Manager)** — High-risk actions (rollbacks, scale, credentials) need manager approval
+- **Agent-Executed Remediation** — Once an L2/L3 action is approved, the self-healing
+  agent automatically SSHes into the target VM and runs the fixed,
+  operator-configured command for that action type — no separate manual step
+  required. A human-triggered "Execute Now" button remains for actions with a
+  configured command that weren't auto-run, and a **Manual Command (addon)**
+  lets an approver type an exact one-off command to run on the VM when no
+  fixed command is configured. `rotate_credentials` is never auto- or
+  manually-executed through the app.
+- **Multi-VM Targets** — Configure any number of named SSH targets (e.g. two
+  local CentOS VMs in VMware Workstation) and route each log batch's healing
+  actions to the right one via `target_host`.
 - **Healing Plans** — AI generates step-by-step execution plans after approval
 - **Continuous Learning** — Successful healing patterns are stored in vector DB for future reference
 - **Real-time Updates** — WebSocket notifications on analysis/approval events
@@ -103,8 +114,11 @@ GOOGLE_MODEL=gemini-1.5-pro  # optional
 | GET  | `/api/anomalies` | List anomalies |
 | GET  | `/api/anomalies/:id` | Anomaly detail + actions |
 | GET  | `/api/approvals` | My pending approvals |
-| POST | `/api/approvals/:id/approve` | Approve action |
+| GET  | `/api/approvals/targets` | List configured self-healing SSH target VMs |
+| POST | `/api/approvals/:id/approve` | Approve action (agent auto-executes if a fixed command is configured) |
 | POST | `/api/approvals/:id/reject` | Reject action |
+| POST | `/api/approvals/:id/execute` | Human-triggered remote execution of the fixed command |
+| POST | `/api/approvals/:id/execute-manual` | Addon: run a human-typed command on the target VM |
 | POST | `/api/approvals/:id/complete` | Mark execution done |
 | GET  | `/api/dashboard/stats` | Dashboard statistics |
 | GET  | `/api/dashboard/audit` | Audit trail |

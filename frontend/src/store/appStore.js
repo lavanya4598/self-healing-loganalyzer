@@ -34,12 +34,13 @@ export const useLogsStore = create((set) => ({
     set({ current: data, isLoading: false })
   },
 
-  uploadLog: async (file, source, environment) => {
+  uploadLog: async (file, source, environment, targetHost) => {
     set({ isUploading: true })
     const form = new FormData()
     form.append('logfile', file)
     form.append('source', source)
     form.append('environment', environment)
+    if (targetHost) form.append('target_host', targetHost)
     try {
       const { data } = await api.post('/logs/upload', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -52,10 +53,10 @@ export const useLogsStore = create((set) => ({
     }
   },
 
-  ingestLogs: async (logs, source, environment) => {
+  ingestLogs: async (logs, source, environment, targetHost) => {
     set({ isUploading: true })
     try {
-      const { data } = await api.post('/logs/ingest', { logs, source, environment })
+      const { data } = await api.post('/logs/ingest', { logs, source, environment, target_host: targetHost })
       set((s) => ({ analyses: [data, ...s.analyses], isUploading: false }))
       return data
     } catch (err) {
@@ -87,6 +88,7 @@ export const useAnomaliesStore = create((set) => ({
 export const useApprovalsStore = create((set) => ({
   pendingActions: [],
   allActions: [],
+  targets: [],
   isLoading: false,
 
   fetchPending: async () => {
@@ -102,6 +104,15 @@ export const useApprovalsStore = create((set) => ({
       set({ allActions: data.data, isLoading: false })
     } catch {
       set({ isLoading: false })
+    }
+  },
+
+  fetchTargets: async () => {
+    try {
+      const { data } = await api.get('/approvals/targets')
+      set({ targets: data.data })
+    } catch {
+      // Non-critical - manual/remote execution UI just won't offer a dropdown
     }
   },
 
@@ -122,6 +133,11 @@ export const useApprovalsStore = create((set) => ({
 
   execute: async (actionId) => {
     const { data } = await api.post(`/approvals/${actionId}/execute`)
+    return data
+  },
+
+  executeManual: async (actionId, command, target) => {
+    const { data } = await api.post(`/approvals/${actionId}/execute-manual`, { command, target })
     return data
   },
 }))

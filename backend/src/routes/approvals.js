@@ -7,10 +7,15 @@ const { aiServiceUrl } = require('../config');
 const logger = require('../logger');
 const { broadcastEvent } = require('../websocket');
 const { generateHealingPlanMock } = require('../mockAnalyzer');
-const { tryAutoHeal, isConfigured, remoteCommandAvailable } = require('../selfHealing');
+const { tryAutoHeal, runManualCommand, isConfigured, remoteCommandAvailable, listConfiguredTargets } = require('../selfHealing');
 
 function withRemoteExecutable(action) {
-  return { ...action, remote_executable: isConfigured() && remoteCommandAvailable(action.action_type) };
+  const target = action.target_host;
+  return {
+    ...action,
+    remote_executable: isConfigured(target) && remoteCommandAvailable(action.action_type),
+    manual_execution_available: isConfigured(target),
+  };
 }
 
 const router = express.Router();
@@ -62,6 +67,14 @@ router.get('/', authenticate, (req, res) => {
 
   actions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   res.json({ data: actions.map(withRemoteExecutable), total: actions.length });
+});
+
+// GET /api/approvals/targets  – list configured self-healing SSH target VMs,
+// so the frontend can offer a real dropdown (e.g. "vm1", "vm2") instead of
+// guessing names. Available to any authenticated user (read-only, no
+// connection details are returned - just the names).
+router.get('/targets', authenticate, (req, res) => {
+  res.json({ data: listConfiguredTargets() });
 });
 
 // GET /api/approvals/all  – all actions regardless of role (admin only)
@@ -146,6 +159,39 @@ router.post('/:actionId/approve', authenticate, async (req, res, next) => {
     });
 
     broadcastEvent('action_approved', { action, plan });
+
+    // Agent-driven execution: now that a human has approved this L2/L3
+    // action, let the self-healing engine run the fixed operator-configured
+    // command for this action_type immediately - no separate "Execute Now"
+    // click required. Falls back to leaving it in 'approved' state (for the
+    // manual "Execute Now" button or the manual-command addon) if no fixed
+    // command is configured for this action_type/target.
+    const healResult = await tryAutoHeal(action.action_type, action.target_host);
+    if (healResult) {
+      action.status = healResult.success ? 'completed' : 'failed';
+      action.auto_executed = true;
+      action.executed_command = healResult.command;
+      action.execution_result = { stdout: healResult.stdout, stderr: healResult.stderr, exit_code: healResult.code };
+      action.completed_at = new Date().toISOString();
+      action.completed_by = 'self-healing-engine';
+      store.actions.set(action.id, action);
+
+      if (anomaly) {
+        anomaly.status = healResult.success ? 'resolved' : 'open';
+        store.anomalies.set(anomaly.id, anomaly);
+      }
+
+      store.audit.push({
+        event: healResult.success ? 'self_healing_executed' : 'self_healing_failed',
+        action_id: action.id,
+        anomaly_id: action.anomaly_id,
+        command: healResult.command,
+        user: 'self-healing-engine',
+        timestamp: new Date().toISOString(),
+      });
+
+      broadcastEvent(healResult.success ? 'healing_completed' : 'healing_failed', action);
+    }
 
     res.json({ action, plan });
   } catch (err) {
@@ -260,13 +306,13 @@ router.post('/:actionId/execute', authenticate, async (req, res, next) => {
       return res.status(403).json({ error: `${action.approval_level} requires: ${required.join(' or ')}` });
     }
 
-    if (!isConfigured() || !remoteCommandAvailable(action.action_type)) {
+    if (!isConfigured(action.target_host) || !remoteCommandAvailable(action.action_type)) {
       return res.status(400).json({
         error: 'No fixed remote command is configured for this action type, or self-healing SSH is not enabled/configured on the server.',
       });
     }
 
-    const result = await tryAutoHeal(action.action_type);
+    const result = await tryAutoHeal(action.action_type, action.target_host);
     if (!result) {
       return res.status(400).json({ error: 'Remote execution is not available for this action right now.' });
     }
@@ -290,6 +336,81 @@ router.post('/:actionId/execute', authenticate, async (req, res, next) => {
       action_id: action.id,
       anomaly_id: action.anomaly_id,
       command: result.command,
+      user: req.user.username,
+      timestamp: new Date().toISOString(),
+    });
+
+    broadcastEvent('healing_' + (result.success ? 'completed' : 'failed'), action);
+    res.json(action);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/approvals/:actionId/execute-manual  – ADDON: human-typed manual
+// command execution on the target VM. Unlike /execute (which only ever runs
+// a fixed, operator-preconfigured command), this lets an already-privileged,
+// authenticated approver type the exact command themselves - useful when no
+// fixed command has been configured for this action_type, or the operator
+// needs a one-off remediation on one of their VMs. The command is authored
+// by the human calling this endpoint (not the LLM), so it is not treated as
+// untrusted input, but it is still gated behind the same approval-role
+// checks as /execute, requires the action to already be approved, is never
+// allowed for rotate_credentials, and is always logged in the audit trail
+// with the exact command and who ran it.
+router.post('/:actionId/execute-manual', authenticate, async (req, res, next) => {
+  try {
+    const action = store.actions.get(req.params.actionId);
+    if (!action) return res.status(404).json({ error: 'Action not found' });
+
+    if (action.status !== 'approved') {
+      return res.status(400).json({ error: `Action must be approved before a manual command can be run (current status: ${action.status})` });
+    }
+
+    if (action.action_type === 'rotate_credentials') {
+      return res.status(400).json({ error: 'Credential rotation can never be executed through this app - run it manually outside this system.' });
+    }
+
+    // Same role gating as approval/execute - manual command execution is at
+    // least as sensitive.
+    const levelRoles = { L2: ['team_lead', 'admin'], L3: ['manager', 'admin'] };
+    const required = levelRoles[action.approval_level] || [];
+    if (required.length > 0 && !required.includes(req.user.role)) {
+      return res.status(403).json({ error: `${action.approval_level} requires: ${required.join(' or ')}` });
+    }
+
+    const { command, target } = req.body;
+    if (!command || typeof command !== 'string' || !command.trim()) {
+      return res.status(400).json({ error: 'command is required' });
+    }
+
+    const targetHost = target || action.target_host;
+    if (!isConfigured(targetHost)) {
+      return res.status(400).json({ error: 'Self-healing SSH is not enabled/configured for this target on the server.' });
+    }
+
+    const result = await runManualCommand(command, targetHost);
+
+    action.status = result.success ? 'completed' : 'failed';
+    action.manually_executed = true;
+    action.executed_command = result.command;
+    action.execution_result = { stdout: result.stdout, stderr: result.stderr, exit_code: result.code };
+    action.completed_at = new Date().toISOString();
+    action.completed_by = req.user.username;
+    store.actions.set(action.id, action);
+
+    const anomaly = store.anomalies.get(action.anomaly_id);
+    if (anomaly) {
+      anomaly.status = result.success ? 'resolved' : 'open';
+      store.anomalies.set(anomaly.id, anomaly);
+    }
+
+    store.audit.push({
+      event: result.success ? 'manual_execution_completed' : 'manual_execution_failed',
+      action_id: action.id,
+      anomaly_id: action.anomaly_id,
+      command: result.command,
+      target: result.target,
       user: req.user.username,
       timestamp: new Date().toISOString(),
     });

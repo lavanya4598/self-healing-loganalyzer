@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react'
-import { useLogsStore } from '../store/appStore'
+import { useState, useCallback, useEffect } from 'react'
+import { useLogsStore, useApprovalsStore } from '../store/appStore'
 import { Upload, Play, FileText, CheckCircle, XCircle } from 'lucide-react'
 import { SeverityBadge, StatusBadge } from '../components/Badges'
 import { formatDistanceToNow } from 'date-fns'
@@ -21,22 +21,25 @@ const DEMO_LOGS = [
 
 export default function LogUpload() {
   const { analyses, fetchAnalyses, uploadLog, ingestLogs, isUploading, isLoading } = useLogsStore()
+  const { targets, fetchTargets } = useApprovalsStore()
   const [dragOver, setDragOver] = useState(false)
   const [source, setSource] = useState('manual-upload')
   const [environment, setEnvironment] = useState('production')
+  const [targetHost, setTargetHost] = useState('')
   const [tab, setTab] = useState('upload')
   const [pasteText, setPasteText] = useState('')
 
   useState(() => { fetchAnalyses() }, [])
+  useEffect(() => { fetchTargets() }, [fetchTargets])
 
   const handleFile = useCallback(async (file) => {
     try {
-      const result = await uploadLog(file, source, environment)
+      const result = await uploadLog(file, source, environment, targetHost)
       toast.success(`Analysis complete: ${result.analysis.anomalies?.length ?? 0} anomalies found`)
     } catch (err) {
       toast.error(err.response?.data?.error || 'Upload failed')
     }
-  }, [uploadLog, source, environment])
+  }, [uploadLog, source, environment, targetHost])
 
   const handleDrop = (e) => {
     e.preventDefault()
@@ -49,7 +52,7 @@ export default function LogUpload() {
     const lines = pasteText.split('\n').filter(l => l.trim())
     if (!lines.length) return toast.error('No log lines to analyse')
     try {
-      const result = await ingestLogs(lines, source, environment)
+      const result = await ingestLogs(lines, source, environment, targetHost)
       toast.success(`Analysis complete: ${result.analysis.anomalies?.length ?? 0} anomalies found`)
       setPasteText('')
     } catch (err) {
@@ -59,7 +62,7 @@ export default function LogUpload() {
 
   const handleDemo = async () => {
     try {
-      const result = await ingestLogs(DEMO_LOGS, 'demo', environment)
+      const result = await ingestLogs(DEMO_LOGS, 'demo', environment, targetHost)
       toast.success(`Demo analysis: ${result.analysis.anomalies?.length ?? 0} anomalies found`)
     } catch (err) {
       toast.error('Demo failed — is the AI service running?')
@@ -77,7 +80,7 @@ export default function LogUpload() {
       </div>
 
       {/* Config */}
-      <div className="card grid grid-cols-2 gap-4">
+      <div className="card grid grid-cols-3 gap-4">
         <div>
           <label className="text-xs text-gray-400 mb-1 block">Source</label>
           <input
@@ -98,6 +101,20 @@ export default function LogUpload() {
             <option value="staging">Staging</option>
             <option value="development">Development</option>
           </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 mb-1 block">Target Host (self-healing VM)</label>
+          <select
+            value={targetHost}
+            onChange={e => setTargetHost(e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+          >
+            <option value="">Default</option>
+            {targets.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-500 mt-1">Which VM approved healing actions for this batch run on.</p>
         </div>
       </div>
 

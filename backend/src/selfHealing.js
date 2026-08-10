@@ -2,14 +2,14 @@
  * Self-healing execution engine.
  *
  * IMPORTANT SECURITY DESIGN:
- * - The AI (Gemini) NEVER supplies the command that actually gets executed.
- *   `action.commands` (LLM free text) is shown to humans as a suggestion only
- *   and is never passed to a shell here. Auto-execution only ever runs a
- *   fixed, operator-configured command per `action_type`, configured via
- *   environment variables (SELF_HEAL_CMD_<ACTION_TYPE>). This avoids using
- *   untrusted/LLM-generated text as a shell command (OWASP injection risk),
- *   even though log content indirectly influences which anomaly/action_type
- *   gets picked.
+ * - The AI (Gemini) NEVER supplies the command that actually gets executed
+ *   for *automatic* healing. `action.commands` (LLM free text) is shown to
+ *   humans as a suggestion only and is never passed to a shell here.
+ *   Auto-execution only ever runs a fixed, operator-configured command per
+ *   `action_type`, configured via environment variables
+ *   (SELF_HEAL_CMD_<ACTION_TYPE>). This avoids using untrusted/LLM-generated
+ *   text as a shell command (OWASP injection risk), even though log content
+ *   indirectly influences which anomaly/action_type gets picked.
  * - `rotate_credentials` can NEVER be auto-executed, regardless of config -
  *   credential rotation is security-critical and always requires a human to
  *   review and run it manually via the existing approval workflow.
@@ -17,6 +17,24 @@
  *   to `true`) and only activates for an action_type if the operator has
  *   configured a command for it - unconfigured types silently fall back to
  *   the existing human-approval workflow, they are never blocked or errored.
+ * - A separate "manual execution" path (see `runManualCommand`) lets an
+ *   already-privileged, authenticated human (team lead / manager / admin -
+ *   whoever is entitled to approve the action) type an exact command to run
+ *   on the target VM for actions that don't have a fixed command configured.
+ *   That command is authored by the human, not the LLM, so it's a
+ *   deliberate, attributable operator action - not an injection risk - but
+ *   it is still logged loudly and gated by the same approval-role checks and
+ *   by requiring the action to already be approved (enforced by the caller
+ *   in routes/approvals.js).
+ *
+ * MULTI-HOST SUPPORT:
+ * Targets are named SSH destinations (e.g. two local CentOS VMs). Configure
+ * one or more via SELF_HEAL_TARGETS=vm1,vm2 plus per-target env vars
+ * (SELF_HEAL_SSH_HOST_VM1, SELF_HEAL_SSH_USER_VM1, ...). A single unnamed
+ * "default" target is also supported via the legacy, unsuffixed
+ * SELF_HEAL_SSH_HOST/... vars for backwards compatibility. Anomalies/actions
+ * carry an optional `target_host` (set at log upload/ingest time) that
+ * selects which VM to run against; if omitted, `default` is used.
  */
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '..', '.env') });
@@ -26,17 +44,59 @@ const { NodeSSH } = require('node-ssh');
 const logger = require('./logger');
 
 const NEVER_AUTO_EXECUTE = new Set(['rotate_credentials']);
+const DEFAULT_TARGET = 'default';
 
 const selfHealingEnabled = String(process.env.SELF_HEALING_ENABLED || 'false').toLowerCase() === 'true';
 
-const sshConfig = {
-  host: process.env.SELF_HEAL_SSH_HOST || '',
-  port: parseInt(process.env.SELF_HEAL_SSH_PORT, 10) || 22,
-  username: process.env.SELF_HEAL_SSH_USER || '',
-  privateKeyPath: process.env.SELF_HEAL_SSH_PRIVATE_KEY_PATH || '',
-  password: process.env.SELF_HEAL_SSH_PASSWORD || '',
-  passphrase: process.env.SELF_HEAL_SSH_PASSPHRASE || undefined,
-};
+function envKey(prefix, targetName) {
+  if (targetName === DEFAULT_TARGET) return prefix; // legacy unsuffixed vars
+  const suffix = targetName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  return `${prefix}_${suffix}`;
+}
+
+function buildSshConfig(targetName) {
+  return {
+    host: process.env[envKey('SELF_HEAL_SSH_HOST', targetName)] || '',
+    port: parseInt(process.env[envKey('SELF_HEAL_SSH_PORT', targetName)], 10) || 22,
+    username: process.env[envKey('SELF_HEAL_SSH_USER', targetName)] || '',
+    privateKeyPath: process.env[envKey('SELF_HEAL_SSH_PRIVATE_KEY_PATH', targetName)] || '',
+    password: process.env[envKey('SELF_HEAL_SSH_PASSWORD', targetName)] || '',
+    passphrase: process.env[envKey('SELF_HEAL_SSH_PASSPHRASE', targetName)] || undefined,
+  };
+}
+
+// Names of all configured targets - always includes 'default' (populated
+// from legacy vars if set) plus anything listed in SELF_HEAL_TARGETS.
+function configuredTargetNames() {
+  const extra = String(process.env.SELF_HEAL_TARGETS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  return [DEFAULT_TARGET, ...extra];
+}
+
+const targetConfigs = new Map(configuredTargetNames().map(name => [name, buildSshConfig(name)]));
+
+function resolveTarget(targetName) {
+  const name = targetName && targetConfigs.has(targetName) ? targetName : DEFAULT_TARGET;
+  return { name, config: targetConfigs.get(name) };
+}
+
+/**
+ * Target names that have real SSH connection details configured - used by
+ * the frontend to offer a dropdown of actual VMs instead of guessing names.
+ */
+function listConfiguredTargets() {
+  return [...targetConfigs.entries()]
+    .filter(([, cfg]) => cfg.host && cfg.username && (cfg.privateKeyPath || cfg.password))
+    .map(([name]) => name);
+}
+
+function isConfigured(targetName) {
+  if (!selfHealingEnabled) return false;
+  const { config } = resolveTarget(targetName);
+  return !!config.host && !!config.username && (!!config.privateKeyPath || !!config.password);
+}
 
 // Fixed, operator-controlled commands - one static command per action_type.
 // Never built from LLM output. Only types with an explicit env var (or a
@@ -54,10 +114,6 @@ function commandFor(actionType) {
   return GENERIC_DEFAULTS[actionType] || null;
 }
 
-function isConfigured() {
-  return selfHealingEnabled && !!sshConfig.host && !!sshConfig.username && (!!sshConfig.privateKeyPath || !!sshConfig.password);
-}
-
 /**
  * Whether a real (non no-op) fixed command is configured for this
  * action_type - used by the approvals UI/API to decide whether to offer a
@@ -71,29 +127,7 @@ function remoteCommandAvailable(actionType) {
   return !!command && command !== 'true';
 }
 
-/**
- * Attempts to auto-execute the fixed command configured for this action_type.
- * Returns `null` if auto-execution doesn't apply (disabled, unconfigured,
- * or blocked action_type) so the caller can fall back to the normal
- * human-approval flow. Never throws - execution failures are returned as a
- * result object, not raised, so a flaky remote host never breaks log upload.
- */
-async function tryAutoHeal(actionType) {
-  if (!selfHealingEnabled) return null;
-  if (NEVER_AUTO_EXECUTE.has(actionType)) return null;
-
-  const command = commandFor(actionType);
-  if (!command) return null;
-
-  if (!isConfigured()) {
-    logger.warn('SELF_HEALING_ENABLED=true but SSH target is not fully configured - skipping auto-execution');
-    return null;
-  }
-
-  if (command === 'true') {
-    return { success: true, command, stdout: '(no-op: alert only)', stderr: '', code: 0 };
-  }
-
+async function execOverSsh(sshConfig, command, targetName) {
   const ssh = new NodeSSH();
   try {
     await ssh.connect({
@@ -112,16 +146,80 @@ async function tryAutoHeal(actionType) {
     return {
       success: result.code === 0,
       command,
+      target: targetName,
       stdout: (result.stdout || '').slice(0, 4000),
       stderr: (result.stderr || '').slice(0, 4000),
       code: result.code,
     };
   } catch (err) {
-    logger.error(`Self-healing SSH execution failed: ${err.message}`);
-    return { success: false, command, stdout: '', stderr: err.message, code: null };
+    logger.error(`Self-healing SSH execution failed (target=${targetName}): ${err.message}`);
+    return { success: false, command, target: targetName, stdout: '', stderr: err.message, code: null };
   } finally {
     ssh.dispose();
   }
 }
 
-module.exports = { tryAutoHeal, selfHealingEnabled, isConfigured, remoteCommandAvailable };
+/**
+ * Attempts to auto-execute the fixed command configured for this action_type
+ * on the given target VM. Returns `null` if auto-execution doesn't apply
+ * (disabled, unconfigured, or blocked action_type) so the caller can fall
+ * back to the normal human-approval flow. Never throws - execution failures
+ * are returned as a result object, not raised, so a flaky remote host never
+ * breaks log upload or approval.
+ */
+async function tryAutoHeal(actionType, targetName) {
+  if (!selfHealingEnabled) return null;
+  if (NEVER_AUTO_EXECUTE.has(actionType)) return null;
+
+  const command = commandFor(actionType);
+  if (!command) return null;
+
+  const { name, config } = resolveTarget(targetName);
+
+  if (!isConfigured(name)) {
+    logger.warn(`SELF_HEALING_ENABLED=true but SSH target '${name}' is not fully configured - skipping auto-execution`);
+    return null;
+  }
+
+  if (command === 'true') {
+    return { success: true, command, target: name, stdout: '(no-op: alert only)', stderr: '', code: 0 };
+  }
+
+  return execOverSsh(config, command, name);
+}
+
+/**
+ * Runs an exact, human-typed command on the given target VM. This is the
+ * "manual override" addon: for actions that don't have a fixed
+ * operator-configured command (or where the operator wants a one-off
+ * remediation), an authenticated user entitled to approve/execute this
+ * action can type the precise command themselves. The caller (routes/
+ * approvals.js) is responsible for role/approval-state gating and audit
+ * logging before calling this - this function only handles the SSH leg.
+ */
+async function runManualCommand(command, targetName) {
+  if (!selfHealingEnabled) {
+    return { success: false, command, target: targetName, stdout: '', stderr: 'Self-healing is disabled (SELF_HEALING_ENABLED=false)', code: null };
+  }
+  const trimmed = (command || '').trim();
+  if (!trimmed) {
+    return { success: false, command: trimmed, target: targetName, stdout: '', stderr: 'No command provided', code: null };
+  }
+
+  const { name, config } = resolveTarget(targetName);
+  if (!isConfigured(name)) {
+    return { success: false, command: trimmed, target: name, stdout: '', stderr: `SSH target '${name}' is not fully configured`, code: null };
+  }
+
+  return execOverSsh(config, trimmed, name);
+}
+
+module.exports = {
+  tryAutoHeal,
+  runManualCommand,
+  selfHealingEnabled,
+  isConfigured,
+  remoteCommandAvailable,
+  listConfiguredTargets,
+  DEFAULT_TARGET,
+};

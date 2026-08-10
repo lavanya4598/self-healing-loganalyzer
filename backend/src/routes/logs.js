@@ -31,17 +31,21 @@ async function runAnalysis(batch) {
 }
 
 /**
- * Persists anomalies + healing actions for a batch and, for each action,
- * attempts self-healing auto-execution (see selfHealing.js). Actions that
- * aren't eligible for auto-execution (feature disabled, unconfigured
+ * Persists anomalies + healing actions for a batch and, for L1 (auto-
+ * approved) actions only, attempts self-healing auto-execution immediately
+ * (see selfHealing.js). L2/L3 actions always wait for a human approval
+ * first - the agent then executes automatically once approved (see
+ * routes/approvals.js) rather than being run here pre-approval. Actions
+ * that aren't eligible for auto-execution (feature disabled, unconfigured
  * action_type, or a security-sensitive type like rotate_credentials) fall
  * back unchanged to the existing manual approval workflow.
  */
-async function provisionAnomaliesAndActions(analysis, batchId) {
+async function provisionAnomaliesAndActions(analysis, batchId, targetHost) {
   for (const anomaly of analysis.anomalies || []) {
     anomaly.batch_id = batchId;
     anomaly.status = 'open';
     anomaly.created_at = new Date().toISOString();
+    anomaly.target_host = targetHost;
     store.anomalies.set(anomaly.id, anomaly);
 
     for (const action of analysis.healing_actions || []) {
@@ -50,8 +54,13 @@ async function provisionAnomaliesAndActions(analysis, batchId) {
       action.id = uuidv4();
       action.batch_id = batchId;
       action.created_at = new Date().toISOString();
+      action.target_host = targetHost;
 
-      const healResult = await tryAutoHeal(action.action_type);
+      // Only L1 (auto-approved, low-risk) actions may auto-execute before a
+      // human has looked at them. L2/L3 always go through approval first.
+      const healResult = action.approval_level === 'L1'
+        ? await tryAutoHeal(action.action_type, targetHost)
+        : null;
 
       if (healResult) {
         action.status = healResult.success ? 'completed' : 'failed';
@@ -98,6 +107,7 @@ router.post('/upload', authenticate, upload.single('logfile'), async (req, res, 
       source: req.body.source || req.file.originalname,
       environment: req.body.environment || 'production',
     };
+    const targetHost = req.body.target_host || undefined;
 
     // Kick off analysis in AI service (falls back to mock analyzer if unavailable)
     const analysis = await runAnalysis(batch);
@@ -111,12 +121,13 @@ router.post('/upload', authenticate, upload.single('logfile'), async (req, res, 
       lineCount: lines.length,
       source: batch.source,
       environment: batch.environment,
+      target_host: targetHost,
       analysis,
     };
     store.analyses.set(batchId, record);
 
     // Store anomalies + actions, attempting self-healing auto-execution where eligible
-    await provisionAnomaliesAndActions(analysis, batchId);
+    await provisionAnomaliesAndActions(analysis, batchId, targetHost);
 
     // Audit trail
     store.audit.push({
@@ -139,7 +150,7 @@ router.post('/upload', authenticate, upload.single('logfile'), async (req, res, 
 // POST /api/logs/ingest  – direct JSON log ingestion
 router.post('/ingest', authenticate, async (req, res, next) => {
   try {
-    const { logs, source, environment } = req.body;
+    const { logs, source, environment, target_host } = req.body;
     if (!Array.isArray(logs) || logs.length === 0) {
       return res.status(400).json({ error: 'logs array is required' });
     }
@@ -155,11 +166,12 @@ router.post('/ingest', authenticate, async (req, res, next) => {
       ingestedAt: new Date().toISOString(),
       lineCount: logs.length,
       environment: batch.environment,
+      target_host: target_host || undefined,
       analysis,
     };
     store.analyses.set(batchId, record);
 
-    await provisionAnomaliesAndActions(analysis, batchId);
+    await provisionAnomaliesAndActions(analysis, batchId, target_host || undefined);
 
     store.audit.push({ event: 'log_ingested', user: req.user.username, batchId, timestamp: new Date().toISOString() });
     broadcastEvent('analysis_complete', record);

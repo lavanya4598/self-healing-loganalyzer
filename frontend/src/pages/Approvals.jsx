@@ -10,7 +10,7 @@ import api from '../services/api'
 
 export default function Approvals() {
   const { user } = useAuthStore()
-  const { pendingActions, allActions, fetchPending, fetchAll, approve, reject, complete, execute, isLoading } = useApprovalsStore()
+  const { pendingActions, allActions, targets, fetchPending, fetchAll, fetchTargets, approve, reject, complete, execute, executeManual, isLoading } = useApprovalsStore()
   const [expanded, setExpanded] = useState(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const urlStatus = searchParams.get('status')
@@ -20,6 +20,9 @@ export default function Approvals() {
   const [rejectReason, setRejectReason] = useState('')
   const [plan, setPlan] = useState({})
   const [justApproved, setJustApproved] = useState(null)
+  const [manualCommandFor, setManualCommandFor] = useState(null)
+  const [manualCommand, setManualCommand] = useState('')
+  const [manualTarget, setManualTarget] = useState('')
 
   useEffect(() => {
     if (urlStatus || urlLevel) setTab('all')
@@ -29,8 +32,9 @@ export default function Approvals() {
 
   useEffect(() => {
     fetchPending()
+    fetchTargets()
     if (user?.role === 'admin') fetchAll()
-  }, [user, fetchPending, fetchAll])
+  }, [user, fetchPending, fetchAll, fetchTargets])
 
   const handleApprove = async (action) => {
     try {
@@ -82,6 +86,28 @@ export default function Approvals() {
       if (user?.role === 'admin') fetchAll()
     } catch (err) {
       toast.error(err.response?.data?.error || 'Remote execution failed')
+    }
+  }
+
+  const openManualCommand = (action) => {
+    setManualCommandFor(action.id)
+    setManualCommand('')
+    setManualTarget(action.target_host || '')
+  }
+
+  const handleExecuteManual = async (action) => {
+    if (!manualCommand.trim()) return toast.error('Enter a command to run')
+    try {
+      const updated = await executeManual(action.id, manualCommand.trim(), manualTarget || undefined)
+      toast[updated.status === 'completed' ? 'success' : 'error'](
+        updated.status === 'completed' ? 'Manual command executed — completed!' : 'Manual command executed — failed.'
+      )
+      setManualCommandFor(null)
+      setManualCommand('')
+      fetchPending()
+      if (user?.role === 'admin') fetchAll()
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Manual execution failed')
     }
   }
 
@@ -215,6 +241,11 @@ export default function Approvals() {
                       Executed remotely via SSH
                     </span>
                   )}
+                  {action.manually_executed && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-900/40 text-amber-300 border border-amber-800/50">
+                      Manual command executed
+                    </span>
+                  )}
                   <span className="text-sm font-semibold text-white">{action.title}</span>
                 </div>
                 <p className="text-xs text-gray-400">{action.description}</p>
@@ -254,6 +285,15 @@ export default function Approvals() {
                       <Zap size={14} /> Execute Now
                     </button>
                   )}
+                  {action.manual_execution_available && action.action_type !== 'rotate_credentials' && (
+                    <button
+                      onClick={() => openManualCommand(action)}
+                      className="flex items-center gap-1 text-xs bg-amber-800 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg transition-colors"
+                      title="Addon: type an exact command to run on the target VM yourself"
+                    >
+                      <Terminal size={14} /> Manual Command
+                    </button>
+                  )}
                   <button
                     onClick={() => handleComplete(action, true)}
                     className="text-xs bg-green-800 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition-colors"
@@ -269,6 +309,43 @@ export default function Approvals() {
                 </div>
               )}
             </div>
+
+            {/* Manual command entry (addon) */}
+            {manualCommandFor === action.id && (
+              <div className="mt-4 pt-4 border-t border-gray-800 space-y-2">
+                <p className="text-xs text-amber-400 uppercase font-semibold">Manual Command (addon) — you are responsible for what you run</p>
+                <div className="flex gap-2 flex-wrap">
+                  <select
+                    value={manualTarget}
+                    onChange={e => setManualTarget(e.target.value)}
+                    className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white"
+                  >
+                    <option value="">{action.target_host || 'default'} (this action's target)</option>
+                    {targets.filter(t => t !== action.target_host).map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={manualCommand}
+                    onChange={e => setManualCommand(e.target.value)}
+                    placeholder="e.g. sudo systemctl restart myapp"
+                    className="flex-1 min-w-[220px] bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs font-mono text-white"
+                  />
+                  <button
+                    onClick={() => handleExecuteManual(action)}
+                    className="text-xs bg-amber-700 hover:bg-amber-600 text-white px-3 py-2 rounded-lg transition-colors"
+                  >
+                    Run on VM
+                  </button>
+                  <button
+                    onClick={() => setManualCommandFor(null)}
+                    className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-2 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Expanded: show plan */}
             {expanded === action.id && (
@@ -315,6 +392,24 @@ export default function Approvals() {
                     </p>
                     <div className="bg-gray-950 rounded-lg p-3 space-y-1">
                       <p className="text-xs font-mono text-indigo-300">$ {action.executed_command}</p>
+                      {action.execution_result?.stdout && (
+                        <p className="text-xs font-mono text-green-400 whitespace-pre-wrap">{action.execution_result.stdout}</p>
+                      )}
+                      {action.execution_result?.stderr && (
+                        <p className="text-xs font-mono text-red-400 whitespace-pre-wrap">{action.execution_result.stderr}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Manual command result (human typed an exact command - addon) */}
+                {action.manually_executed && (
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase mb-1 flex items-center gap-1">
+                      <Terminal size={12} /> Manually Executed Command
+                    </p>
+                    <div className="bg-gray-950 rounded-lg p-3 space-y-1">
+                      <p className="text-xs font-mono text-amber-300">$ {action.executed_command}</p>
                       {action.execution_result?.stdout && (
                         <p className="text-xs font-mono text-green-400 whitespace-pre-wrap">{action.execution_result.stdout}</p>
                       )}
