@@ -10,6 +10,8 @@ const { port } = require('./config');
 const logger = require('./logger');
 const errorHandler = require('./middleware/errorHandler');
 const { initWebSocket } = require('./websocket');
+const { startLogCollector } = require('./logCollector');
+const { startServiceMonitor } = require('./serviceMonitor');
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -54,4 +56,6 @@ initWebSocket(server);
 server.listen(port, () => {
   logger.info(`Backend API listening on http://localhost:${port}`);
   logger.info(`WebSocket available at ws://localhost:${port}/ws`);
+  startLogCollector();
+  startServiceMonitor();
 });

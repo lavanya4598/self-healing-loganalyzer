@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useLogsStore, useApprovalsStore } from '../store/appStore'
-import { Upload, Play, FileText, CheckCircle, XCircle } from 'lucide-react'
+import { Upload, Play, FileText, CheckCircle, XCircle, RadioTower, HeartPulse } from 'lucide-react'
 import { SeverityBadge, StatusBadge } from '../components/Badges'
 import { formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
 import { Link } from 'react-router-dom'
+import { useWebSocket } from '../services/websocket'
 
 const DEMO_LOGS = [
   '[2024-03-15 09:01:12] ERROR DatabaseService: Connection timeout after 30s - host=db-primary:5432',
@@ -20,7 +21,7 @@ const DEMO_LOGS = [
 ]
 
 export default function LogUpload() {
-  const { analyses, fetchAnalyses, uploadLog, ingestLogs, isUploading, isLoading } = useLogsStore()
+  const { analyses, fetchAnalyses, uploadLog, ingestLogs, collectNow, checkServicesNow, isUploading, isCollecting, isCheckingServices, isLoading } = useLogsStore()
   const { targets, fetchTargets } = useApprovalsStore()
   const [dragOver, setDragOver] = useState(false)
   const [source, setSource] = useState('manual-upload')
@@ -31,6 +32,49 @@ export default function LogUpload() {
 
   useState(() => { fetchAnalyses() }, [])
   useEffect(() => { fetchTargets() }, [fetchTargets])
+
+  // Auto-refresh the analysis history whenever the log-collection agent (or
+  // anyone else) completes a new analysis, so entries collected in the
+  // background show up here without needing a manual page refresh.
+  useWebSocket((msg) => {
+    if (msg.type === 'analysis_complete') fetchAnalyses()
+  })
+
+  const handleCollectNow = async () => {
+    try {
+      const results = await collectNow()
+      const total = results.reduce((sum, r) => sum + (r.collected || 0), 0)
+      const failed = results.filter(r => r.error)
+      if (failed.length) {
+        toast.error(`Collection failed for ${failed.map(r => r.target).join(', ')}: ${failed[0].error}`)
+      } else if (total === 0) {
+        toast('No new log lines found on any configured VM', { icon: 'ℹ️' })
+      } else {
+        toast.success(`Collected ${total} new log line(s) from ${results.filter(r => r.collected > 0).map(r => r.target).join(', ')}`)
+      }
+      fetchAnalyses()
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Log collection failed — is LOG_COLLECTION enabled and are the VMs reachable?')
+    }
+  }
+
+  const handleCheckServices = async () => {
+    try {
+      const results = await checkServicesNow()
+      const raised = results.flatMap(r => (r.results || []).filter(s => s.raised))
+      const recovered = results.flatMap(r => (r.results || []).filter(s => s.recovered))
+      if (raised.length) {
+        toast.error(`Service down: ${raised.map(s => s.service).join(', ')} — approval-gated action created`)
+      } else if (recovered.length) {
+        toast.success(`Recovered: ${recovered.map(s => s.service).join(', ')}`)
+      } else {
+        toast('All monitored services are active', { icon: '✅' })
+      }
+      fetchAnalyses()
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Service check failed — is SERVICE_MONITORING enabled and are the VMs reachable?')
+    }
+  }
 
   const handleFile = useCallback(async (file) => {
     try {
@@ -73,10 +117,30 @@ export default function LogUpload() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Log Analysis</h1>
-        <button onClick={handleDemo} className="btn-ghost flex items-center gap-2 text-sm">
-          <Play size={16} />
-          Run Demo
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCollectNow}
+            disabled={isCollecting}
+            className="btn-ghost flex items-center gap-2 text-sm disabled:opacity-50"
+            title="Ask the log-collection agent to poll host1/host2 for new logs right now"
+          >
+            <RadioTower size={16} className={isCollecting ? 'animate-pulse' : ''} />
+            {isCollecting ? 'Collecting...' : 'Collect Logs Now'}
+          </button>
+          <button
+            onClick={handleCheckServices}
+            disabled={isCheckingServices}
+            className="btn-ghost flex items-center gap-2 text-sm disabled:opacity-50"
+            title="Check systemd service status on host1/host2 right now"
+          >
+            <HeartPulse size={16} className={isCheckingServices ? 'animate-pulse' : ''} />
+            {isCheckingServices ? 'Checking...' : 'Check Services Now'}
+          </button>
+          <button onClick={handleDemo} className="btn-ghost flex items-center gap-2 text-sm">
+            <Play size={16} />
+            Run Demo
+          </button>
+        </div>
       </div>
 
       {/* Config */}
@@ -187,12 +251,22 @@ export default function LogUpload() {
             >
               <FileText className="text-indigo-400 shrink-0" size={18} />
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-white font-medium truncate">{a.filename || a.source}</p>
-                <p className="text-xs text-gray-400">{a.lineCount} lines · {a.environment}</p>
+                <p className="text-sm text-white font-medium truncate flex items-center gap-2">
+                  {a.filename || a.source}
+                  {a.collectedBy === 'log-collection-agent' && (
+                    <span className="text-[10px] uppercase tracking-wide bg-teal-900/60 text-teal-300 px-1.5 py-0.5 rounded shrink-0">
+                      agent-collected
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs text-gray-400">
+                  {a.lineCount} lines · {a.environment}
+                  {a.target_host ? ` · ${a.target_host}` : ''}
+                </p>
               </div>
               <div className="text-right shrink-0">
                 <p className="text-xs text-gray-400">
-                  {formatDistanceToNow(new Date(a.uploadedAt || a.ingestedAt), { addSuffix: true })}
+                  {formatDistanceToNow(new Date(a.uploadedAt || a.ingestedAt || a.collectedAt), { addSuffix: true })}
                 </p>
                 <p className="text-xs text-amber-400">
                   {a.analysis?.anomalies?.length ?? 0} anomalies

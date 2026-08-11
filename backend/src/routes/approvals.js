@@ -294,7 +294,7 @@ router.post('/:actionId/execute', authenticate, async (req, res, next) => {
     const action = store.actions.get(req.params.actionId);
     if (!action) return res.status(404).json({ error: 'Action not found' });
 
-    if (action.status !== 'approved') {
+    if (action.status !== 'approved' && action.status !== 'auto_approved') {
       return res.status(400).json({ error: `Action must be approved before it can be executed remotely (current status: ${action.status})` });
     }
 
@@ -363,7 +363,7 @@ router.post('/:actionId/execute-manual', authenticate, async (req, res, next) =>
     const action = store.actions.get(req.params.actionId);
     if (!action) return res.status(404).json({ error: 'Action not found' });
 
-    if (action.status !== 'approved') {
+    if (action.status !== 'approved' && action.status !== 'auto_approved') {
       return res.status(400).json({ error: `Action must be approved before a manual command can be run (current status: ${action.status})` });
     }
 

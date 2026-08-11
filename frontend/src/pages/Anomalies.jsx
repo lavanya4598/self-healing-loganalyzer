@@ -5,6 +5,7 @@ import { AlertTriangle, ChevronDown, ChevronRight, Download, X } from 'lucide-re
 import { formatDistanceToNow } from 'date-fns'
 import { useSearchParams } from 'react-router-dom'
 import api from '../services/api'
+import { useWebSocket } from '../services/websocket'
 
 export default function Anomalies() {
   const { anomalies, fetchAnomalies, isLoading } = useAnomaliesStore()
@@ -26,6 +27,15 @@ export default function Anomalies() {
       status: searchParams.get('status') || '',
     })
   }, [searchParams, fetchAnomalies])
+
+  // Live-refresh when a new analysis completes (manual upload or the
+  // automatic log-collection agent), so newly detected anomalies show up
+  // without needing a manual page refresh.
+  useWebSocket((msg) => {
+    if (msg.type === 'analysis_complete') {
+      fetchAnomalies({ ...(batchId ? { batch_id: batchId } : {}), ...(keyword ? { keyword } : {}) })
+    }
+  })
 
   useEffect(() => {
     if (!batchId) return setReport(null)

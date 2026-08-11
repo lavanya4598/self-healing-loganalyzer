@@ -84,18 +84,42 @@ function resolveTarget(targetName) {
 
 /**
  * Target names that have real SSH connection details configured - used by
- * the frontend to offer a dropdown of actual VMs instead of guessing names.
+ * the frontend to offer a dropdown of actual VMs instead of guessing names,
+ * and by the log-collection agent to know which hosts to poll.
  */
 function listConfiguredTargets() {
   return [...targetConfigs.entries()]
-    .filter(([, cfg]) => cfg.host && cfg.username && (cfg.privateKeyPath || cfg.password))
+    .filter(([, cfg]) => hasCreds(cfg))
     .map(([name]) => name);
+}
+
+// Whether a target has usable SSH connection details - independent of
+// SELF_HEALING_ENABLED, which only gates whether *remediation* commands are
+// allowed to run. Log collection (read-only) uses this directly so it can
+// work even when auto-remediation is deliberately left off.
+function hasCreds(config) {
+  return !!config.host && !!config.username && (!!config.privateKeyPath || !!config.password);
 }
 
 function isConfigured(targetName) {
   if (!selfHealingEnabled) return false;
   const { config } = resolveTarget(targetName);
-  return !!config.host && !!config.username && (!!config.privateKeyPath || !!config.password);
+  return hasCreds(config);
+}
+
+/**
+ * Runs an arbitrary command on the named target over SSH, regardless of the
+ * SELF_HEALING_ENABLED flag - used for read-only operations like log
+ * collection, not remediation. Callers that perform remediation must keep
+ * gating on `isConfigured`/`selfHealingEnabled` themselves; this is
+ * intentionally the lower-level primitive.
+ */
+async function runOnTarget(command, targetName) {
+  const { name, config } = resolveTarget(targetName);
+  if (!hasCreds(config)) {
+    return { success: false, command, target: name, stdout: '', stderr: `SSH target '${name}' is not fully configured`, code: null };
+  }
+  return execOverSsh(config, command, name);
 }
 
 // Fixed, operator-controlled commands - one static command per action_type.
@@ -217,6 +241,7 @@ async function runManualCommand(command, targetName) {
 module.exports = {
   tryAutoHeal,
   runManualCommand,
+  runOnTarget,
   selfHealingEnabled,
   isConfigured,
   remoteCommandAvailable,

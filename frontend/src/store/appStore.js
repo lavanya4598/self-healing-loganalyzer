@@ -21,6 +21,8 @@ export const useLogsStore = create((set) => ({
   current: null,
   isLoading: false,
   isUploading: false,
+  isCollecting: false,
+  isCheckingServices: false,
 
   fetchAnalyses: async () => {
     set({ isLoading: true })
@@ -62,6 +64,30 @@ export const useLogsStore = create((set) => ({
     } catch (err) {
       set({ isUploading: false })
       throw err
+    }
+  },
+
+  // Triggers the automatic log-collection agent to poll all configured VMs
+  // (host1, host2, ...) right now instead of waiting for its next interval.
+  collectNow: async () => {
+    set({ isCollecting: true })
+    try {
+      const { data } = await api.post('/logs/collect')
+      return data.data
+    } finally {
+      set({ isCollecting: false })
+    }
+  },
+
+  // Triggers the service monitor to check systemd service status on all
+  // configured VMs right now (systemctl is-active - read-only).
+  checkServicesNow: async () => {
+    set({ isCheckingServices: true })
+    try {
+      const { data } = await api.post('/logs/check-services')
+      return data.data
+    } finally {
+      set({ isCheckingServices: false })
     }
   },
 }))

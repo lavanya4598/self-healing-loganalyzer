@@ -91,7 +91,9 @@ export default function Approvals() {
 
   const openManualCommand = (action) => {
     setManualCommandFor(action.id)
-    setManualCommand('')
+    // Pre-fill with the LLM-suggested command (if any) - still editable, and
+    // still requires the human to review and click "Run on VM" themselves.
+    setManualCommand(action.commands?.[0] || '')
     setManualTarget(action.target_host || '')
   }
 
@@ -274,7 +276,7 @@ export default function Approvals() {
                 </div>
               )}
 
-              {action.status === 'approved' && (
+              {(action.status === 'approved' || action.status === 'auto_approved') && (
                 <div className="flex gap-2 shrink-0">
                   {action.remote_executable && (
                     <button

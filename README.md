@@ -36,6 +36,21 @@ GenAI API (OpenAI / Google Gemini)
 - **Multi-VM Targets** — Configure any number of named SSH targets (e.g. two
   local CentOS VMs in VMware Workstation) and route each log batch's healing
   actions to the right one via `target_host`.
+- **Automatic Log Collection** — An optional background agent periodically
+  SSHes into each configured VM, pulls recent system logs (`journalctl`),
+  and runs them through the same analysis → approval → healing pipeline as
+  a manual upload. Disabled by default (`LOG_COLLECTION_ENABLED=false`); a
+  "Collect Logs Now" button and `POST /api/logs/collect` trigger an
+  on-demand poll without waiting for the interval.
+- **Service Health Monitoring** — An optional background agent periodically
+  checks a configured list of systemd services on each VM (`systemctl
+  is-active`, read-only). If one goes down, an approval-gated healing action
+  is raised with an LLM-suggested (or deterministic fallback) restart
+  command, pre-filled into the Manual Command box for a human to review,
+  approve and execute — never auto-executed. Recovery is auto-detected and
+  clears the action. Disabled by default (`SERVICE_MONITORING_ENABLED=false`);
+  a "Check Services Now" button and `POST /api/logs/check-services` trigger
+  an on-demand check.
 - **Healing Plans** — AI generates step-by-step execution plans after approval
 - **Continuous Learning** — Successful healing patterns are stored in vector DB for future reference
 - **Real-time Updates** — WebSocket notifications on analysis/approval events
@@ -110,6 +125,8 @@ GOOGLE_MODEL=gemini-1.5-pro  # optional
 | GET  | `/api/auth/me` | Current user |
 | POST | `/api/logs/upload` | Upload log file |
 | POST | `/api/logs/ingest` | Ingest log lines (JSON) |
+| POST | `/api/logs/collect` | Trigger the log-collection agent to poll all VMs now |
+| POST | `/api/logs/check-services` | Trigger the service monitor to check systemd service status on all VMs now |
 | GET  | `/api/logs` | List analyses |
 | GET  | `/api/anomalies` | List anomalies |
 | GET  | `/api/anomalies/:id` | Anomaly detail + actions |
