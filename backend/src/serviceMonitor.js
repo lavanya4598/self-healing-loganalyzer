@@ -65,36 +65,27 @@ async function raiseServiceDownAction(targetName, service, status) {
   const analysis = await runAnalysis(batch);
 
   if (!analysis.anomalies?.length) {
-    const anomalyId = uuidv4();
-    analysis.anomalies = [{
-      id: anomalyId,
-      title: `Service '${service}' is down`,
-      description: `systemd reports '${service}' as ${status} on ${targetName}.`,
-      severity: 'high',
-      affected_components: [service],
-      root_cause: `systemctl is-active reported status '${status}'`,
-      log_references: [logLine],
-      confidence: 1,
-    }];
-    analysis.healing_actions = [{
-      anomaly_id: anomalyId,
-      action_type: 'service_down',
-      title: `Restart '${service}' on ${targetName}`,
-      description: `Suggested fix - restart the '${service}' service.`,
-      commands: [`sudo systemctl restart ${service}`],
-      estimated_impact: 'Restores the service to an active state if the failure was transient.',
-      risk_level: 'medium',
-      approval_level: 'L2',
-    }];
+    analysis.anomalies = [{ id: uuidv4(), severity: 'high', affected_components: [service], log_references: [logLine], confidence: 1 }];
+    analysis.healing_actions = [{ anomaly_id: analysis.anomalies[0].id, risk_level: 'medium' }];
   }
 
-  // Approval level/action_type are ALWAYS enforced here, never trusted from
-  // the LLM/mock response - see module doc comment.
+  // Title/description and approval level/action_type are ALWAYS enforced
+  // here, never trusted from the LLM/mock response (which analyses a
+  // synthetic, generic log line and can't know the real service name) -
+  // see module doc comment. This guarantees every service-down alert names
+  // the actual service instead of a generic "unclassified" label.
+  const anomaly = analysis.anomalies[0];
+  anomaly.title = `Service '${service}' is down`;
+  anomaly.description = `systemd reports '${service}' as ${status} on ${targetName}.`;
+  anomaly.root_cause = `systemctl is-active reported status '${status}'`;
+
   for (const action of analysis.healing_actions || []) {
     action.action_type = 'service_down';
+    action.title = `Restart '${service}' on ${targetName}`;
+    action.description = `Suggested fix - restart the '${service}' service.`;
     action.approval_level = 'L2';
     action.approval_reason = "Enforced to L2 - restarting a dynamically-detected service always requires human approval";
-    if (!action.commands?.length) action.commands = [`sudo systemctl restart ${service}`];
+    action.commands = [`sudo systemctl restart ${service}`];
   }
 
   const record = {
