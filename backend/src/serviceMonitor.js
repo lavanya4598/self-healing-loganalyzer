@@ -153,10 +153,20 @@ async function checkTarget(targetName) {
   for (const { service, status } of statuses) {
     const key = `${targetName}:${service}`;
     const isDown = status !== 'active';
-    if (isDown && !downState.has(key)) {
+    // A tracked outage is only still "handled" if at least one of its
+    // actions is still open (pending/approved). If a human already closed
+    // all of them out (Mark Done/Failed) while the service is still
+    // actually down, treat it as untracked so a fresh actionable alert
+    // gets raised instead of silently reporting "already known" forever.
+    const tracked = downState.get(key);
+    const stillOpen = tracked?.actionIds?.some(id => {
+      const action = store.actions.get(id);
+      return action && !['completed', 'failed', 'rejected'].includes(action.status);
+    });
+    if (isDown && (!downState.has(key) || !stillOpen)) {
       try {
-        const tracked = await raiseServiceDownAction(targetName, service, status);
-        downState.set(key, tracked);
+        const raised = await raiseServiceDownAction(targetName, service, status);
+        downState.set(key, raised);
         results.push({ service, status, raised: true });
       } catch (err) {
         logger.error(`Service monitor failed to raise action for '${service}' on '${targetName}': ${err.message}`);

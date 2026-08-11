@@ -61,10 +61,13 @@ export default function LogUpload() {
   const handleCheckServices = async () => {
     try {
       const results = await checkServicesNow()
-      const raised = results.flatMap(r => (r.results || []).filter(s => s.raised))
-      const recovered = results.flatMap(r => (r.results || []).filter(s => s.recovered))
-      if (raised.length) {
-        toast.error(`Service down: ${raised.map(s => s.service).join(', ')} — approval-gated action created`)
+      const allChecked = results.flatMap(r => r.results || [])
+      const down = allChecked.filter(s => s.status !== 'active')
+      const newlyRaised = down.filter(s => s.raised)
+      const recovered = allChecked.filter(s => s.recovered)
+      if (down.length) {
+        const suffix = newlyRaised.length ? ' — approval-gated action created' : ' (already known, see Approvals)'
+        toast.error(`Service down: ${down.map(s => s.service).join(', ')}${suffix}`)
       } else if (recovered.length) {
         toast.success(`Recovered: ${recovered.map(s => s.service).join(', ')}`)
       } else {
