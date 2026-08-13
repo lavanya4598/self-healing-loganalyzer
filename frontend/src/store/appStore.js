@@ -23,6 +23,7 @@ export const useLogsStore = create((set) => ({
   isUploading: false,
   isCollecting: false,
   isCheckingServices: false,
+  isCheckingDefunct: false,
 
   fetchAnalyses: async () => {
     set({ isLoading: true })
@@ -88,6 +89,18 @@ export const useLogsStore = create((set) => ({
       return data.data
     } finally {
       set({ isCheckingServices: false })
+    }
+  },
+
+  // Triggers the defunct-process monitor to scan all configured VMs for
+  // zombie ('Z' state) processes right now (ps -eo pid,ppid,stat,comm - read-only).
+  checkDefunctNow: async () => {
+    set({ isCheckingDefunct: true })
+    try {
+      const { data } = await api.post('/logs/check-defunct')
+      return data.data
+    } finally {
+      set({ isCheckingDefunct: false })
     }
   },
 }))

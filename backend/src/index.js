@@ -12,6 +12,7 @@ const errorHandler = require('./middleware/errorHandler');
 const { initWebSocket } = require('./websocket');
 const { startLogCollector } = require('./logCollector');
 const { startServiceMonitor } = require('./serviceMonitor');
+const { startDefunctProcessMonitor } = require('./defunctProcessMonitor');
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -58,4 +59,5 @@ server.listen(port, () => {
   logger.info(`WebSocket available at ws://localhost:${port}/ws`);
   startLogCollector();
   startServiceMonitor();
+  startDefunctProcessMonitor();
 });

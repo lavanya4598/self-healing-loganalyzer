@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useLogsStore, useApprovalsStore } from '../store/appStore'
-import { Upload, Play, FileText, CheckCircle, XCircle, RadioTower, HeartPulse } from 'lucide-react'
+import { Upload, Play, FileText, CheckCircle, XCircle, RadioTower, HeartPulse, Skull } from 'lucide-react'
 import { SeverityBadge, StatusBadge } from '../components/Badges'
 import { formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -21,7 +21,7 @@ const DEMO_LOGS = [
 ]
 
 export default function LogUpload() {
-  const { analyses, fetchAnalyses, uploadLog, ingestLogs, collectNow, checkServicesNow, isUploading, isCollecting, isCheckingServices, isLoading } = useLogsStore()
+  const { analyses, fetchAnalyses, uploadLog, ingestLogs, collectNow, checkServicesNow, checkDefunctNow, isUploading, isCollecting, isCheckingServices, isCheckingDefunct, isLoading } = useLogsStore()
   const { targets, fetchTargets } = useApprovalsStore()
   const [dragOver, setDragOver] = useState(false)
   const [source, setSource] = useState('manual-upload')
@@ -76,6 +76,26 @@ export default function LogUpload() {
       fetchAnalyses()
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || 'Service check failed — is SERVICE_MONITORING enabled and are the VMs reachable?')
+    }
+  }
+
+  const handleCheckDefunct = async () => {
+    try {
+      const results = await checkDefunctNow()
+      const withZombies = results.filter(r => r.count > 0)
+      const newlyRaised = withZombies.filter(r => r.raised)
+      const recovered = results.filter(r => r.recovered)
+      if (withZombies.length) {
+        const suffix = newlyRaised.length ? ' — approval-gated action created' : ' (already known, see Approvals)'
+        toast.error(`Zombie processes on: ${withZombies.map(r => `${r.target} (${r.count})`).join(', ')}${suffix}`)
+      } else if (recovered.length) {
+        toast.success(`Cleared: ${recovered.map(r => r.target).join(', ')}`)
+      } else {
+        toast('No defunct processes found', { icon: '✅' })
+      }
+      fetchAnalyses()
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Defunct process check failed — is DEFUNCT_MONITORING enabled and are the VMs reachable?')
     }
   }
 
@@ -138,6 +158,15 @@ export default function LogUpload() {
           >
             <HeartPulse size={16} className={isCheckingServices ? 'animate-pulse' : ''} />
             {isCheckingServices ? 'Checking...' : 'Check Services Now'}
+          </button>
+          <button
+            onClick={handleCheckDefunct}
+            disabled={isCheckingDefunct}
+            className="btn-ghost flex items-center gap-2 text-sm disabled:opacity-50"
+            title="Check for defunct (zombie) processes on host1/host2 right now"
+          >
+            <Skull size={16} className={isCheckingDefunct ? 'animate-pulse' : ''} />
+            {isCheckingDefunct ? 'Checking...' : 'Check Defunct Processes'}
           </button>
           <button onClick={handleDemo} className="btn-ghost flex items-center gap-2 text-sm">
             <Play size={16} />

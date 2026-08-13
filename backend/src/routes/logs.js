@@ -8,6 +8,7 @@ const { broadcastEvent } = require('../websocket');
 const { runAnalysis, provisionAnomaliesAndActions } = require('../logPipeline');
 const { collectNow } = require('../logCollector');
 const { checkNow } = require('../serviceMonitor');
+const { checkNow: checkDefunctNow } = require('../defunctProcessMonitor');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -32,6 +33,19 @@ router.post('/collect', authenticate, async (req, res, next) => {
 router.post('/check-services', authenticate, async (req, res, next) => {
   try {
     const results = await checkNow();
+    res.json({ data: results });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/logs/check-defunct  – ask the defunct-process monitor to scan
+// all configured VMs for zombie ('Z' state) processes right now. Read-only
+// (ps -eo pid,ppid,stat,comm); any host with zombies present raises an
+// informational, approval-gated action listing the affected PIDs.
+router.post('/check-defunct', authenticate, async (req, res, next) => {
+  try {
+    const results = await checkDefunctNow();
     res.json({ data: results });
   } catch (err) {
     next(err);
