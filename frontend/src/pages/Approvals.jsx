@@ -262,6 +262,7 @@ export default function Approvals() {
                 <p className="text-xs text-gray-400">{action.description}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   {formatDistanceToNow(new Date(action.created_at), { addSuffix: true })}
+                  {` · Node: ${action.target_host || 'default'}`}
                   {action.approved_by && ` · Approved by ${action.approved_by}`}
                   {action.rejected_by && ` · Rejected by ${action.rejected_by}`}
                 </p>
@@ -378,6 +379,10 @@ export default function Approvals() {
                   <div>
                     <p className="text-xs text-gray-400 uppercase mb-1">Risk Level</p>
                     <p className="font-medium text-amber-300">{action.risk_level}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase mb-1">Target Node</p>
+                    <p className="font-mono text-cyan-300">{action.target_host || 'default'}</p>
                   </div>
                   <div className="col-span-2">
                     <p className="text-xs text-gray-400 uppercase mb-1">Approval Reason</p>
