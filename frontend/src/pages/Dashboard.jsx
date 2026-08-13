@@ -7,6 +7,7 @@ import {
 } from 'recharts'
 import { AlertTriangle, CheckCircle, Clock, Activity, Wifi, WifiOff, AlertCircle, Timer, Unplug } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import LogQueryChat from '../components/LogQueryChat'
 
 const SEVERITY_COLORS = {
   critical: '#dc2626',
@@ -195,6 +196,9 @@ export default function Dashboard() {
           {stats.recent_audit.length === 0 && <p className="text-gray-500 text-sm">No activity yet.</p>}
         </div>
       </div>
+
+      {/* Natural-language log query */}
+      <LogQueryChat />
     </div>
   )
 }

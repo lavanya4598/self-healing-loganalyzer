@@ -103,6 +103,14 @@ export const useLogsStore = create((set) => ({
       set({ isCheckingDefunct: false })
     }
   },
+
+  // Asks a natural-language question about previously ingested logs/anomalies.
+  // Retrieval + LLM answering happens server-side; `history` (recent Q&A
+  // turns from this chat) lets follow-up questions carry context.
+  queryLogs: async (question, targetHost, history) => {
+    const { data } = await api.post('/logs/query', { question, target_host: targetHost || undefined, history })
+    return data
+  },
 }))
 
 export const useAnomaliesStore = create((set) => ({
