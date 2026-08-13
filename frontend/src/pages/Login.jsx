@@ -67,10 +67,10 @@ export default function Login() {
             <p className="text-xs text-gray-500 text-center mb-2">Demo accounts (password: password123)</p>
             <div className="grid grid-cols-2 gap-2 text-xs">
               {[
-                { username: 'admin', role: 'Admin' },
-                { username: 'teamlead', role: 'Team Lead' },
-                { username: 'manager', role: 'Manager' },
-                { username: 'engineer', role: 'Engineer' },
+                { username: 'appsupport', role: 'Application Support' },
+                { username: 'sdm', role: 'Service Delivery Manager' },
+                { username: 'sm', role: 'Service Manager' },
+                { username: 'im', role: 'Incident Manager' },
               ].map(u => (
                 <button
                   key={u.username}

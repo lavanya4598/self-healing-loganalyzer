@@ -37,8 +37,8 @@ export function ApprovalLevelBadge({ level }) {
   }
   const labels = {
     L1: 'L1 · Auto',
-    L2: 'L2 · Team Lead',
-    L3: 'L3 · Manager',
+    L2: 'L2 · SDM',
+    L3: 'L3 · SDM+SM+IM',
   }
   return (
     <span className={clsx('text-xs font-semibold px-2 py-0.5 rounded-full', colors[level] || 'bg-gray-700')}>

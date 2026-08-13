@@ -8,6 +8,11 @@ import { formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
 import api from '../services/api'
 
+// Roles required per approval level (mirrors backend/src/config.js). L2
+// needs any one of the listed roles; L3 needs ALL of them to sign off.
+const REQUIRED_ROLES = { L2: ['sdm'], L3: ['sdm', 'sm', 'im'] }
+const ROLE_LABELS = { sdm: 'SDM', sm: 'SM', im: 'IM' }
+
 export default function Approvals() {
   const { user } = useAuthStore()
   const { pendingActions, allActions, targets, fetchPending, fetchAll, fetchTargets, approve, reject, complete, execute, executeManual, isLoading } = useApprovalsStore()
@@ -33,7 +38,7 @@ export default function Approvals() {
   useEffect(() => {
     fetchPending()
     fetchTargets()
-    if (user?.role === 'admin') fetchAll()
+    fetchAll()
   }, [user, fetchPending, fetchAll, fetchTargets])
 
   const handleApprove = async (action) => {
@@ -44,10 +49,14 @@ export default function Approvals() {
       // The action's status changes away from 'pending_approval', so it may
       // immediately disappear from the currently viewed tab/list once we
       // refetch below - show the plan here too so it's never missed.
-      setJustApproved({ action, plan: result.plan })
-      toast.success('Action approved — healing plan generated!')
+      if (result.plan) {
+        setJustApproved({ action, plan: result.plan })
+        toast.success('Action approved — healing plan generated!')
+      } else {
+        toast.success(`Sign-off recorded. Still waiting on: ${result.pending_roles?.join(', ')}`)
+      }
       fetchPending()
-      if (user?.role === 'admin') fetchAll()
+      fetchAll()
     } catch (err) {
       toast.error(err.response?.data?.error || 'Approval failed')
     }
@@ -70,7 +79,7 @@ export default function Approvals() {
       await complete(action.id, success, '')
       toast.success(success ? 'Marked as completed!' : 'Marked as failed')
       fetchPending()
-      if (user?.role === 'admin') fetchAll()
+      fetchAll()
     } catch (err) {
       toast.error('Failed to update status')
     }
@@ -83,7 +92,7 @@ export default function Approvals() {
         updated.status === 'completed' ? 'Executed remotely — completed!' : 'Executed remotely — command failed.'
       )
       fetchPending()
-      if (user?.role === 'admin') fetchAll()
+      fetchAll()
     } catch (err) {
       toast.error(err.response?.data?.error || 'Remote execution failed')
     }
@@ -107,7 +116,7 @@ export default function Approvals() {
       setManualCommandFor(null)
       setManualCommand('')
       fetchPending()
-      if (user?.role === 'admin') fetchAll()
+      fetchAll()
     } catch (err) {
       toast.error(err.response?.data?.error || 'Manual execution failed')
     }
@@ -155,11 +164,11 @@ export default function Approvals() {
         </div>
         <div>
           <ApprovalLevelBadge level="L2" />
-          <p className="text-gray-400 mt-1 text-xs">Requires Team Lead. Medium severity actions (restarts, config changes).</p>
+          <p className="text-gray-400 mt-1 text-xs">Requires Service Delivery Manager. Medium severity actions (restarts, config changes).</p>
         </div>
         <div>
           <ApprovalLevelBadge level="L3" />
-          <p className="text-gray-400 mt-1 text-xs">Requires Manager. High severity (scale, rollback, credentials).</p>
+          <p className="text-gray-400 mt-1 text-xs">Requires SDM, Service Manager & Incident Manager (all three). High severity (scale, rollback, credentials).</p>
         </div>
       </div>
 
@@ -256,10 +265,18 @@ export default function Approvals() {
                   {action.approved_by && ` · Approved by ${action.approved_by}`}
                   {action.rejected_by && ` · Rejected by ${action.rejected_by}`}
                 </p>
+                {action.approval_level === 'L3' && action.status === 'pending_approval' && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Sign-off: {REQUIRED_ROLES.L3.map(r => (
+                      `${ROLE_LABELS[r]} ${(action.approvals || []).some(a => a.role === r) ? '✓' : '…'}`
+                    )).join('   ')}
+                  </p>
+                )}
               </div>
 
               {/* Action buttons */}
-              {action.status === 'pending_approval' && (
+              {action.status === 'pending_approval' && REQUIRED_ROLES[action.approval_level]?.includes(user?.role)
+                && !(action.approvals || []).some(a => a.role === user?.role) && (
                 <div className="flex gap-2 shrink-0">
                   <button
                     onClick={() => handleApprove(action)}

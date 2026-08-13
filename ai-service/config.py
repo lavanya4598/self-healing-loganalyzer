@@ -26,8 +26,8 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 # Approval Levels
 APPROVAL_LEVELS = {
     "L1": {"label": "Auto-Approve", "severity": ["low"], "requires_human": False},
-    "L2": {"label": "Team Lead", "severity": ["medium"], "requires_human": True},
-    "L3": {"label": "Manager", "severity": ["high", "critical"], "requires_human": True},
+    "L2": {"label": "Service Delivery Manager", "severity": ["medium"], "requires_human": True},
+    "L3": {"label": "SDM + Service Manager + Incident Manager", "severity": ["high", "critical"], "requires_human": True},
 }
 
 # Self-healing action categories

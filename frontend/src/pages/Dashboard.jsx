@@ -47,8 +47,8 @@ export default function Dashboard() {
 
   const approvalLevelData = [
     { name: 'L1 Auto', value: actions.by_level.L1, level: 'L1' },
-    { name: 'L2 Team Lead', value: actions.by_level.L2, level: 'L2' },
-    { name: 'L3 Manager', value: actions.by_level.L3, level: 'L3' },
+    { name: 'L2 SDM', value: actions.by_level.L2, level: 'L2' },
+    { name: 'L3 SDM+SM+IM', value: actions.by_level.L3, level: 'L3' },
   ]
 
   const goToAnomalies = (severity) => navigate(`/anomalies?severity=${severity.toLowerCase()}`)

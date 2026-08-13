@@ -33,4 +33,4 @@ Write-Host "  Frontend:   http://localhost:3000" -ForegroundColor White
 Write-Host "  Backend:    http://localhost:3001" -ForegroundColor White
 Write-Host "  AI Service: http://localhost:8001 (Node.js + Gemini)" -ForegroundColor White
 Write-Host ""
-Write-Host "Demo credentials: admin / password123" -ForegroundColor Cyan
+Write-Host "Demo credentials: appsupport / password123 (also: sdm, sm, im)" -ForegroundColor Cyan

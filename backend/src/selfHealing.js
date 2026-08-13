@@ -18,9 +18,10 @@
  *   configured a command for it - unconfigured types silently fall back to
  *   the existing human-approval workflow, they are never blocked or errored.
  * - A separate "manual execution" path (see `runManualCommand`) lets an
- *   already-privileged, authenticated human (team lead / manager / admin -
- *   whoever is entitled to approve the action) type an exact command to run
- *   on the target VM for actions that don't have a fixed command configured.
+ *   already-privileged, authenticated human (SDM / Service Manager /
+ *   Incident Manager - whoever is entitled to approve the action) type an
+ *   exact command to run on the target VM for actions that don't have a
+ *   fixed command configured.
  *   That command is authored by the human, not the LLM, so it's a
  *   deliberate, attributable operator action - not an injection risk - but
  *   it is still logged loudly and gated by the same approval-role checks and

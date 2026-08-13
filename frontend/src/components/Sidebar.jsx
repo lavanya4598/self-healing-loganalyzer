@@ -11,6 +11,13 @@ const NAV = [
   { to: '/audit', icon: Activity, label: 'Audit Trail' },
 ]
 
+const ROLE_LABELS = {
+  app_support: 'Application Support',
+  sdm: 'Service Delivery Manager',
+  sm: 'Service Manager',
+  im: 'Incident Manager',
+}
+
 export default function Sidebar() {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
@@ -63,7 +70,7 @@ export default function Sidebar() {
           </div>
           <div className="min-w-0">
             <p className="text-sm font-medium text-white truncate">{user?.name}</p>
-            <p className="text-xs text-gray-400 capitalize">{user?.role?.replace('_', ' ')}</p>
+            <p className="text-xs text-gray-400">{ROLE_LABELS[user?.role] || user?.role}</p>
           </div>
         </div>
         <button onClick={handleLogout} className="w-full flex items-center gap-2 text-sm text-gray-400 hover:text-red-400 transition-colors">

@@ -23,8 +23,8 @@ GenAI API (OpenAI / Google Gemini)
 - **Self-Healing Actions** — AI generates specific remediation commands
 - **3-Level Approval Workflow**:
   - **L1 (Auto)** — Safe, low-risk actions execute automatically
-  - **L2 (Team Lead)** — Medium-risk actions need team lead or admin approval
-  - **L3 (Manager)** — High-risk actions (rollbacks, scale, credentials) need manager approval
+  - **L2 (SDM)** — Medium-risk actions need Service Delivery Manager approval
+  - **L3 (SDM + SM + IM)** — High-risk actions (rollbacks, scale, credentials) need Service Delivery Manager, Service Manager AND Incident Manager to all approve
 - **Agent-Executed Remediation** — Once an L2/L3 action is approved, the self-healing
   agent automatically SSHes into the target VM and runs the fixed,
   operator-configured command for that action type — no separate manual step
@@ -93,12 +93,12 @@ npm run dev
 
 ## Demo Users
 
-| Username   | Password    | Role       | Can Approve |
-|-----------|-------------|------------|-------------|
-| admin     | password123 | Admin      | L1, L2, L3  |
-| teamlead  | password123 | Team Lead  | L2          |
-| manager   | password123 | Manager    | L3          |
-| engineer  | password123 | Engineer   | View only   |
+| Username    | Password    | Role                      | Can Approve                   |
+|-------------|-------------|---------------------------|--------------------------------|
+| appsupport  | password123 | Application Support       | L1 (auto, no action needed)   |
+| sdm         | password123 | Service Delivery Manager  | L2 (alone), L3 (with SM & IM)  |
+| sm          | password123 | Service Manager           | L3 (with SDM & IM)            |
+| im          | password123 | Incident Manager          | L3 (with SDM & SM)            |
 
 ## LLM Configuration
 

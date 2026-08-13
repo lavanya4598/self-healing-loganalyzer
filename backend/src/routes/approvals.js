@@ -3,7 +3,7 @@ const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, requireApprovalRole } = require('../middleware/auth');
 const store = require('../store');
-const { aiServiceUrl } = require('../config');
+const { aiServiceUrl, approvalRoles } = require('../config');
 const logger = require('../logger');
 const { broadcastEvent } = require('../websocket');
 const { generateHealingPlanMock } = require('../mockAnalyzer');
@@ -16,6 +16,20 @@ function withRemoteExecutable(action) {
     remote_executable: isConfigured(target) && remoteCommandAvailable(action.action_type),
     manual_execution_available: isConfigured(target),
   };
+}
+
+// Roles required to approve a given level. L2 needs any one of the listed
+// roles; L3 lists more than one role, meaning ALL of them must individually
+// sign off (see requiredStillPending) before the action is fully approved.
+function requiredApprovalRoles(level) {
+  return approvalRoles[level] || [];
+}
+
+// Roles from the required set that have NOT yet signed off on this action.
+function requiredStillPending(action) {
+  const required = requiredApprovalRoles(action.approval_level);
+  const signedOff = new Set((action.approvals || []).map(a => a.role));
+  return required.filter(r => !signedOff.has(r));
 }
 
 const router = express.Router();
@@ -55,15 +69,10 @@ router.get('/', authenticate, (req, res) => {
     actions = actions.filter(a => a.status === status);
   }
 
-  // Filter to actions the user can approve
-  const roleCanApprove = {
-    admin: ['L1', 'L2', 'L3'],
-    manager: ['L3'],
-    team_lead: ['L2'],
-    engineer: [],
-  };
-  const levels = roleCanApprove[req.user.role] || [];
-  actions = actions.filter(a => levels.includes(a.approval_level));
+  // Filter to actions still awaiting sign-off from the current user's role
+  // (for L3's multi-signoff, an action drops off this list for a role as
+  // soon as that role has approved, even while other roles still need to).
+  actions = actions.filter(a => requiredStillPending(a).includes(req.user.role));
 
   actions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   res.json({ data: actions.map(withRemoteExecutable), total: actions.length });
@@ -77,11 +86,9 @@ router.get('/targets', authenticate, (req, res) => {
   res.json({ data: listConfiguredTargets() });
 });
 
-// GET /api/approvals/all  – all actions regardless of role (admin only)
+// GET /api/approvals/all  – all actions, for the shared oversight view
+// (every role here is a management/approval role, so no extra restriction).
 router.get('/all', authenticate, (req, res) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin only' });
-  }
   const list = [...store.actions.values()].sort(
     (a, b) => new Date(b.created_at) - new Date(a.created_at),
   );
@@ -113,10 +120,39 @@ router.post('/:actionId/approve', authenticate, async (req, res, next) => {
     }
 
     // Check the user has the right role for this level
-    const levelRoles = { L2: ['team_lead', 'admin'], L3: ['manager', 'admin'] };
-    const required = levelRoles[action.approval_level] || [];
+    const required = requiredApprovalRoles(action.approval_level);
     if (required.length > 0 && !required.includes(req.user.role)) {
-      return res.status(403).json({ error: `${action.approval_level} requires: ${required.join(' or ')}` });
+      return res.status(403).json({ error: `${action.approval_level} requires: ${required.join(', ')}` });
+    }
+
+    // Record this role's individual sign-off. For L2 (single required role)
+    // this immediately completes approval. For L3 (SDM + SM + IM), ALL
+    // three must sign off before the action is fully approved.
+    action.approvals = action.approvals || [];
+    if (action.approvals.some(a => a.role === req.user.role)) {
+      return res.status(400).json({ error: `You (${req.user.role}) have already signed off on this action.` });
+    }
+    action.approvals.push({ role: req.user.role, username: req.user.username, approved_at: new Date().toISOString() });
+
+    const stillPending = required.filter(r => !action.approvals.some(a => a.role === r));
+
+    store.audit.push({
+      event: 'action_approval_signed',
+      action_id: action.id,
+      anomaly_id: action.anomaly_id,
+      approved_by: req.user.username,
+      role: req.user.role,
+      approval_level: action.approval_level,
+      still_pending: stillPending,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (stillPending.length > 0) {
+      // Multi-signoff level still waiting on other required roles - persist
+      // this partial sign-off, but don't generate a plan or auto-execute yet.
+      store.actions.set(action.id, action);
+      broadcastEvent('action_partially_approved', action);
+      return res.json({ action, plan: null, pending_roles: stillPending });
     }
 
     // Fetch the anomaly for the healing plan request
@@ -132,9 +168,9 @@ router.post('/:actionId/approve', authenticate, async (req, res, next) => {
       action.approval_level,
     );
 
-    // Update action status
+    // Update action status - all required roles have now signed off
     action.status = 'approved';
-    action.approved_by = req.user.username;
+    action.approved_by = action.approvals.map(a => a.username).join(', ');
     action.approved_at = new Date().toISOString();
     action.plan_id = plan.healing_id;
     store.actions.set(action.id, action);
@@ -299,11 +335,11 @@ router.post('/:actionId/execute', authenticate, async (req, res, next) => {
     }
 
     // Same role gating as approval, since remote execution is at least as
-    // sensitive as approving.
-    const levelRoles = { L2: ['team_lead', 'admin'], L3: ['manager', 'admin'] };
-    const required = levelRoles[action.approval_level] || [];
+    // sensitive as approving. Any one of the level's required roles may
+    // execute, since the action is already fully approved by this point.
+    const required = requiredApprovalRoles(action.approval_level);
     if (required.length > 0 && !required.includes(req.user.role)) {
-      return res.status(403).json({ error: `${action.approval_level} requires: ${required.join(' or ')}` });
+      return res.status(403).json({ error: `${action.approval_level} requires one of: ${required.join(', ')}` });
     }
 
     if (!isConfigured(action.target_host) || !remoteCommandAvailable(action.action_type)) {
@@ -372,11 +408,10 @@ router.post('/:actionId/execute-manual', authenticate, async (req, res, next) =>
     }
 
     // Same role gating as approval/execute - manual command execution is at
-    // least as sensitive.
-    const levelRoles = { L2: ['team_lead', 'admin'], L3: ['manager', 'admin'] };
-    const required = levelRoles[action.approval_level] || [];
+    // least as sensitive. Any one of the level's required roles may run it.
+    const required = requiredApprovalRoles(action.approval_level);
     if (required.length > 0 && !required.includes(req.user.role)) {
-      return res.status(403).json({ error: `${action.approval_level} requires: ${required.join(' or ')}` });
+      return res.status(403).json({ error: `${action.approval_level} requires one of: ${required.join(', ')}` });
     }
 
     const { command, target } = req.body;
