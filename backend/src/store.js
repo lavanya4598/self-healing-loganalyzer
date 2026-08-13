@@ -123,4 +123,18 @@ store.audit.push = (...args) => {
   return result;
 };
 
+// Clears all persisted history (analyses, anomalies, actions, approvals,
+// plans, audit) but keeps demo users intact. Re-wraps fresh Maps with
+// autosave so subsequent writes keep persisting normally.
+store.resetAll = () => {
+  for (const key of PERSISTED_KEYS) {
+    if (key === 'audit') {
+      store.audit.length = 0;
+    } else {
+      store[key] = withAutosave(new Map());
+    }
+  }
+  persist();
+};
+
 module.exports = store;

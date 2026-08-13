@@ -111,6 +111,13 @@ export const useLogsStore = create((set) => ({
     const { data } = await api.post('/logs/query', { question, target_host: targetHost || undefined, history })
     return data
   },
+
+  // Wipes all analyses/anomalies/actions/approvals/plans/audit history
+  // (demo users untouched) so the dashboard/log history starts fresh.
+  clearAllData: async () => {
+    await api.delete('/logs/all')
+    set({ analyses: [], current: null })
+  },
 }))
 
 export const useAnomaliesStore = create((set) => ({

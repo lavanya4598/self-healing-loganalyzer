@@ -4,8 +4,15 @@
 
 @layer base {
   body {
-    @apply bg-gray-950 text-gray-100 font-sans;
+    @apply bg-gray-950 text-gray-100 font-sans antialiased;
+    background-image: radial-gradient(circle at 0% 0%, rgba(79, 70, 229, 0.07), transparent 45%);
+    background-attachment: fixed;
   }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-gray-700 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-gray-600; }
 }
 
 @layer components {
@@ -14,8 +21,9 @@
   .badge-medium   { @apply bg-amber-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full; }
   .badge-low      { @apply bg-green-600 text-white text-xs font-semibold px-2 py-0.5 rounded-full; }
 
-  .card { @apply bg-gray-900 border border-gray-800 rounded-xl p-5; }
+  .card { @apply bg-gray-900/70 backdrop-blur-sm border border-gray-800 rounded-xl p-5 shadow-card transition-shadow duration-200; }
   .btn-primary { @apply bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg transition-colors; }
   .btn-danger  { @apply bg-red-700 hover:bg-red-600 text-white font-medium px-4 py-2 rounded-lg transition-colors; }
   .btn-ghost   { @apply bg-gray-800 hover:bg-gray-700 text-gray-200 font-medium px-4 py-2 rounded-lg transition-colors; }
 }
+

@@ -29,10 +29,10 @@ export default function Anomalies() {
   }, [searchParams, fetchAnomalies])
 
   // Live-refresh when a new analysis completes (manual upload or the
-  // automatic log-collection agent), so newly detected anomalies show up
-  // without needing a manual page refresh.
+  // automatic log-collection agent), or when all data is cleared, so the
+  // list stays in sync without needing a manual page refresh.
   useWebSocket((msg) => {
-    if (msg.type === 'analysis_complete') {
+    if (msg.type === 'analysis_complete' || msg.type === 'data_reset') {
       fetchAnomalies({ ...(batchId ? { batch_id: batchId } : {}), ...(keyword ? { keyword } : {}) })
     }
   })

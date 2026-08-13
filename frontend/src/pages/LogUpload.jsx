@@ -1,11 +1,12 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useLogsStore, useApprovalsStore } from '../store/appStore'
-import { Upload, Play, FileText, CheckCircle, XCircle, RadioTower, HeartPulse, Skull } from 'lucide-react'
+import { Play, FileText, RadioTower, HeartPulse, Skull, Trash2 } from 'lucide-react'
 import { SeverityBadge, StatusBadge } from '../components/Badges'
 import { formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
 import { Link } from 'react-router-dom'
 import { useWebSocket } from '../services/websocket'
+import LogQueryChat from '../components/LogQueryChat'
 
 const DEMO_LOGS = [
   '[2024-03-15 09:01:12] ERROR DatabaseService: Connection timeout after 30s - host=db-primary:5432',
@@ -21,23 +22,20 @@ const DEMO_LOGS = [
 ]
 
 export default function LogUpload() {
-  const { analyses, fetchAnalyses, uploadLog, ingestLogs, collectNow, checkServicesNow, checkDefunctNow, isUploading, isCollecting, isCheckingServices, isCheckingDefunct, isLoading } = useLogsStore()
+  const { analyses, fetchAnalyses, ingestLogs, collectNow, checkServicesNow, checkDefunctNow, clearAllData, isCollecting, isCheckingServices, isCheckingDefunct } = useLogsStore()
   const { targets, fetchTargets } = useApprovalsStore()
-  const [dragOver, setDragOver] = useState(false)
   const [source, setSource] = useState('manual-upload')
   const [environment, setEnvironment] = useState('production')
   const [targetHost, setTargetHost] = useState('')
-  const [tab, setTab] = useState('upload')
-  const [pasteText, setPasteText] = useState('')
 
   useState(() => { fetchAnalyses() }, [])
   useEffect(() => { fetchTargets() }, [fetchTargets])
 
   // Auto-refresh the analysis history whenever the log-collection agent (or
-  // anyone else) completes a new analysis, so entries collected in the
-  // background show up here without needing a manual page refresh.
+  // anyone else) completes a new analysis or all data is cleared, so entries
+  // show up (or disappear) here without needing a manual page refresh.
   useWebSocket((msg) => {
-    if (msg.type === 'analysis_complete') fetchAnalyses()
+    if (msg.type === 'analysis_complete' || msg.type === 'data_reset') fetchAnalyses()
   })
 
   const handleCollectNow = async () => {
@@ -99,40 +97,22 @@ export default function LogUpload() {
     }
   }
 
-  const handleFile = useCallback(async (file) => {
-    try {
-      const result = await uploadLog(file, source, environment, targetHost)
-      toast.success(`Analysis complete: ${result.analysis.anomalies?.length ?? 0} anomalies found`)
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Upload failed')
-    }
-  }, [uploadLog, source, environment, targetHost])
-
-  const handleDrop = (e) => {
-    e.preventDefault()
-    setDragOver(false)
-    const file = e.dataTransfer.files[0]
-    if (file) handleFile(file)
-  }
-
-  const handlePaste = async () => {
-    const lines = pasteText.split('\n').filter(l => l.trim())
-    if (!lines.length) return toast.error('No log lines to analyse')
-    try {
-      const result = await ingestLogs(lines, source, environment, targetHost)
-      toast.success(`Analysis complete: ${result.analysis.anomalies?.length ?? 0} anomalies found`)
-      setPasteText('')
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Ingest failed')
-    }
-  }
-
   const handleDemo = async () => {
     try {
       const result = await ingestLogs(DEMO_LOGS, 'demo', environment, targetHost)
       toast.success(`Demo analysis: ${result.analysis.anomalies?.length ?? 0} anomalies found`)
     } catch (err) {
       toast.error('Demo failed — is the AI service running?')
+    }
+  }
+
+  const handleClearAll = async () => {
+    if (!window.confirm('Clear all analyses, anomalies, healing actions and audit history? This cannot be undone.')) return
+    try {
+      await clearAllData()
+      toast.success('All log/anomaly history cleared')
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Failed to clear data')
     }
   }
 
@@ -171,6 +151,14 @@ export default function LogUpload() {
           <button onClick={handleDemo} className="btn-ghost flex items-center gap-2 text-sm">
             <Play size={16} />
             Run Demo
+          </button>
+          <button
+            onClick={handleClearAll}
+            className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-red-800/50 text-red-400 hover:bg-red-950/30 transition-colors"
+            title="Permanently clear all analyses/anomalies/actions/audit history"
+          >
+            <Trash2 size={16} />
+            Clear All Data
           </button>
         </div>
       </div>
@@ -214,66 +202,14 @@ export default function LogUpload() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 border-b border-gray-800">
-        {['upload', 'paste'].map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              tab === t ? 'border-indigo-500 text-white' : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            {t === 'upload' ? 'File Upload' : 'Paste Logs'}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'upload' ? (
-        <div
-          className={`card border-2 border-dashed text-center cursor-pointer transition-colors ${
-            dragOver ? 'border-indigo-500 bg-indigo-950/20' : 'border-gray-700'
-          }`}
-          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => document.getElementById('file-input').click()}
-        >
-          <input
-            id="file-input"
-            type="file"
-            accept=".log,.txt,.json,.csv"
-            className="hidden"
-            onChange={e => e.target.files[0] && handleFile(e.target.files[0])}
-          />
-          <Upload className="mx-auto text-gray-500 mb-3" size={40} />
-          <p className="text-gray-300 font-medium">Drop log file here or click to browse</p>
-          <p className="text-gray-500 text-sm mt-1">Supports .log, .txt, .json, .csv (max 10MB)</p>
-          {isUploading && <p className="text-indigo-400 mt-3 animate-pulse">Analysing... this may take a moment</p>}
-        </div>
-      ) : (
-        <div className="card space-y-3">
-          <textarea
-            value={pasteText}
-            onChange={e => setPasteText(e.target.value)}
-            rows={12}
-            placeholder="Paste log lines here, one per line..."
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono resize-none"
-          />
-          <button
-            onClick={handlePaste}
-            disabled={isUploading || !pasteText.trim()}
-            className="btn-primary disabled:opacity-50"
-          >
-            {isUploading ? 'Analysing...' : 'Analyse Logs'}
-          </button>
-        </div>
-      )}
+      {/* AI chat - the single place to ask questions, paste raw log lines,
+          or attach a log file for analysis */}
+      <LogQueryChat source={source} environment={environment} targetHost={targetHost} />
 
       {/* History */}
       <div className="card">
         <h2 className="text-sm font-semibold text-gray-400 mb-4">Analysis History</h2>
-        {analyses.length === 0 && <p className="text-gray-500 text-sm">No analyses yet. Upload or paste logs above.</p>}
+        {analyses.length === 0 && <p className="text-gray-500 text-sm">No analyses yet. Use the chat below to attach or paste logs.</p>}
         <div className="space-y-2">
           {analyses.map(a => (
             <Link

@@ -5,9 +5,11 @@ import { useWebSocket } from '../services/websocket'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import { AlertTriangle, CheckCircle, Clock, Activity, Wifi, WifiOff, AlertCircle, Timer, Unplug } from 'lucide-react'
+import {
+  AlertTriangle, CheckCircle, Clock, Activity, Wifi, WifiOff, AlertCircle, Timer, Unplug,
+  PieChart as PieChartIcon, BarChart3, History, Loader2,
+} from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
-import LogQueryChat from '../components/LogQueryChat'
 
 const SEVERITY_COLORS = {
   critical: '#dc2626',
@@ -28,7 +30,14 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [fetchStats])
 
-  if (!stats) return <div className="p-8 text-gray-400">Loading dashboard...</div>
+  if (!stats) {
+    return (
+      <div className="p-8 flex items-center gap-2 text-gray-400">
+        <Loader2 size={18} className="animate-spin" />
+        Loading dashboard...
+      </div>
+    )
+  }
 
   const { anomalies, actions } = stats
 
@@ -60,16 +69,21 @@ export default function Dashboard() {
   const logPatterns = stats.log_patterns || { errors: 0, timeouts: 0, disconnected: 0 }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 lg:p-8 space-y-6 max-w-[1600px] mx-auto">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Dashboard</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Last updated {formatDistanceToNow(new Date(stats.generated_at), { addSuffix: true })}
+          </p>
+        </div>
         <button
           onClick={() => navigate('/audit')}
           title="View connection/audit events"
-          className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+          className={`flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
             wsStatus === 'connected'
-              ? 'border-green-800/50 text-green-400 hover:bg-green-950/30'
-              : 'border-red-800/50 text-red-400 hover:bg-red-950/30 animate-pulse'
+              ? 'border-green-800/50 bg-green-950/30 text-green-400 hover:bg-green-950/50'
+              : 'border-red-800/50 bg-red-950/20 text-red-400 hover:bg-red-950/40 animate-pulse'
           }`}
         >
           {wsStatus === 'connected' ? <Wifi size={14} /> : <WifiOff size={14} />}
@@ -83,7 +97,7 @@ export default function Dashboard() {
         <button
           onClick={() => goToAnomaliesByKeyword('error')}
           title="View anomalies whose logs mention errors"
-          className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border border-red-800/50 text-red-400 hover:bg-red-950/30 transition-colors"
+          className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-lg border border-red-800/50 bg-red-950/10 text-red-400 hover:bg-red-950/30 transition-colors"
         >
           <AlertCircle size={14} />
           Errors: {logPatterns.errors}
@@ -91,7 +105,7 @@ export default function Dashboard() {
         <button
           onClick={() => goToAnomaliesByKeyword('timeout')}
           title="View anomalies whose logs mention timeouts"
-          className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border border-amber-800/50 text-amber-400 hover:bg-amber-950/30 transition-colors"
+          className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-lg border border-amber-800/50 bg-amber-950/10 text-amber-400 hover:bg-amber-950/30 transition-colors"
         >
           <Timer size={14} />
           Timeouts: {logPatterns.timeouts}
@@ -99,7 +113,7 @@ export default function Dashboard() {
         <button
           onClick={() => goToAnomaliesByKeyword('disconnected')}
           title="View anomalies whose logs mention disconnects"
-          className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800/50 transition-colors"
+          className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800/30 text-gray-400 hover:bg-gray-800/50 transition-colors"
         >
           <Unplug size={14} />
           Disconnected: {logPatterns.disconnected}
@@ -108,17 +122,17 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard icon={<AlertTriangle className="text-red-400" size={22} />} label="Open Anomalies" value={anomalies.open} color="red" />
-        <KpiCard icon={<Clock className="text-amber-400" size={22} />} label="Pending Approvals" value={actions.pending_approval} color="amber" />
-        <KpiCard icon={<CheckCircle className="text-green-400" size={22} />} label="Resolved" value={anomalies.resolved} color="green" />
-        <KpiCard icon={<Activity className="text-indigo-400" size={22} />} label="Total Analyses" value={stats.analyses.total} color="indigo" />
+        <KpiCard icon={<AlertTriangle size={20} />} label="Open Anomalies" value={anomalies.open} color="red" />
+        <KpiCard icon={<Clock size={20} />} label="Pending Approvals" value={actions.pending_approval} color="amber" />
+        <KpiCard icon={<CheckCircle size={20} />} label="Resolved" value={anomalies.resolved} color="green" />
+        <KpiCard icon={<Activity size={20} />} label="Total Analyses" value={stats.analyses.total} color="indigo" />
       </div>
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Severity breakdown */}
-        <div className="card col-span-1">
-          <h2 className="text-sm font-semibold text-gray-400 mb-4">Anomalies by Severity</h2>
+        <div className="card col-span-1 hover:shadow-card-hover">
+          <SectionHeader icon={<PieChartIcon size={15} />} title="Anomalies by Severity" />
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
               <Pie
@@ -140,8 +154,8 @@ export default function Dashboard() {
         </div>
 
         {/* Action status */}
-        <div className="card col-span-1">
-          <h2 className="text-sm font-semibold text-gray-400 mb-4">Action Status</h2>
+        <div className="card col-span-1 hover:shadow-card-hover">
+          <SectionHeader icon={<PieChartIcon size={15} />} title="Action Status" />
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
               <Pie
@@ -163,8 +177,8 @@ export default function Dashboard() {
         </div>
 
         {/* Approval levels */}
-        <div className="card col-span-1">
-          <h2 className="text-sm font-semibold text-gray-400 mb-4">Actions by Approval Level</h2>
+        <div className="card col-span-1 hover:shadow-card-hover">
+          <SectionHeader icon={<BarChart3 size={15} />} title="Actions by Approval Level" />
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={approvalLevelData}>
               <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 12 }} />
@@ -184,39 +198,47 @@ export default function Dashboard() {
 
       {/* Recent Audit */}
       <div className="card">
-        <h2 className="text-sm font-semibold text-gray-400 mb-4">Recent Activity</h2>
-        <div className="space-y-2">
+        <SectionHeader icon={<History size={15} />} title="Recent Activity" />
+        <div className="divide-y divide-gray-800/70">
           {stats.recent_audit.slice(0, 8).map((entry, i) => (
-            <div key={i} className="flex items-center gap-3 text-sm py-1 border-b border-gray-800 last:border-0">
-              <span className="text-indigo-400 font-mono text-xs">{entry.event}</span>
-              <span className="text-gray-400 flex-1">{entry.user}</span>
-              <span className="text-gray-500 text-xs">{formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}</span>
+            <div key={i} className="flex items-center gap-3 text-sm py-2.5 first:pt-0 last:pb-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+              <span className="text-indigo-300 font-mono text-xs">{entry.event}</span>
+              <span className="text-gray-400 flex-1 truncate">{entry.user}</span>
+              <span className="text-gray-500 text-xs shrink-0">{formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}</span>
             </div>
           ))}
           {stats.recent_audit.length === 0 && <p className="text-gray-500 text-sm">No activity yet.</p>}
         </div>
       </div>
-
-      {/* Natural-language log query */}
-      <LogQueryChat />
     </div>
   )
 }
 
-function KpiCard({ icon, label, value, color }) {
-  const bg = {
-    red: 'border-red-800/50',
-    amber: 'border-amber-800/50',
-    green: 'border-green-800/50',
-    indigo: 'border-indigo-800/50',
-  }
+function SectionHeader({ icon, title }) {
   return (
-    <div className={`card border ${bg[color] || ''}`}>
-      <div className="flex items-center gap-3 mb-1">
-        {icon}
-        <span className="text-xs text-gray-400">{label}</span>
+    <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-4">
+      <span className="text-indigo-400">{icon}</span>
+      {title}
+    </h2>
+  )
+}
+
+function KpiCard({ icon, label, value, color }) {
+  const styles = {
+    red: { border: 'border-red-800/40', iconBg: 'bg-red-950/50 text-red-400' },
+    amber: { border: 'border-amber-800/40', iconBg: 'bg-amber-950/50 text-amber-400' },
+    green: { border: 'border-green-800/40', iconBg: 'bg-green-950/50 text-green-400' },
+    indigo: { border: 'border-indigo-800/40', iconBg: 'bg-indigo-950/50 text-indigo-400' },
+  }
+  const s = styles[color] || styles.indigo
+  return (
+    <div className={`card border ${s.border} hover:shadow-card-hover`}>
+      <div className="flex items-center gap-3 mb-3">
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${s.iconBg}`}>{icon}</div>
+        <span className="text-xs font-medium text-gray-400">{label}</span>
       </div>
-      <p className="text-3xl font-bold text-white">{value ?? 0}</p>
+      <p className="text-3xl font-bold text-white tracking-tight">{value ?? 0}</p>
     </div>
   )
 }

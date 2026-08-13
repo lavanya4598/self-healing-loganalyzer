@@ -224,4 +224,15 @@ router.get('/:id', authenticate, (req, res) => {
   res.json(record);
 });
 
+// DELETE /api/logs/all  – clears all analyses/anomalies/actions/approvals/
+// plans/audit history (demo users are untouched) so the dashboard/log
+// history starts fresh. Destructive and irreversible - the frontend should
+// confirm with the user before calling this.
+router.delete('/all', authenticate, (req, res) => {
+  store.resetAll();
+  store.audit.push({ event: 'data_reset', user: req.user.username, timestamp: new Date().toISOString() });
+  broadcastEvent('data_reset', { by: req.user.username });
+  res.json({ cleared: true });
+});
+
 module.exports = router;
